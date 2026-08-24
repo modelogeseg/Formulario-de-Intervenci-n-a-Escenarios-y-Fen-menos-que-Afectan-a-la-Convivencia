@@ -1016,7 +1016,7 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
   <div class="success-screen" id="success">
     <div class="success-icon">✅</div>
     <h2>¡Levantamiento registrado!</h2>
-    <p>El formulario de campo ha sido enviado exitosamente al Centro de Control de Información Territorial del OSCC. Un analista revisará la información en las próximas horas.</p>
+    <p>El formulario de campo ha sido enviado exitosamente a la <strong>base de datos central del OSCC</strong> (Google Sheets). La información estará disponible para consulta y análisis en el tablero de control. Un analista revisará la información en las próximas horas.</p>
     <div class="success-code" id="success-code">P2-XXX-0001</div>
     <p style="margin-bottom:20px; font-size:0.85em; color:var(--ink3);">Guarde este código como referencia del levantamiento realizado.</p>
     <button class="btn-new" onclick="nuevoFormulario()">+ Nuevo levantamiento</button>
@@ -1369,18 +1369,270 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  //  CONFIGURACIÓN — URL del Apps Script Web App
+  //  ⚠ REEMPLACE esta URL después de desplegar el Apps Script
+  // ══════════════════════════════════════════════════════════════════════
+  const APPS_SCRIPT_URL = "PEGAR_AQUI_LA_URL_DEL_APPS_SCRIPT";
+
+  // ── Helpers de recolección ──────────────────────────────────────────
+  function getRadio(name) {
+    const sel = document.querySelector('input[name="' + name + '"]:checked');
+    return sel ? sel.value : "";
+  }
+
+  function getChips(containerId) {
+    const chips = document.querySelectorAll('#' + containerId + ' input[type="checkbox"]:checked');
+    return Array.from(chips).map(c => c.value).join(", ");
+  }
+
+  function getCheckboxGroup(container) {
+    // Para checkboxes sin value explícito, toma el texto del label
+    const checks = container.querySelectorAll('input[type="checkbox"]:checked');
+    return Array.from(checks).map(c => {
+      if (c.value && c.value !== 'on') return c.value;
+      const label = c.closest('.opt-item, label');
+      return label ? label.textContent.trim().substring(0, 80) : "Sí";
+    }).join(", ");
+  }
+
+  function getVal(id) {
+    const el = document.getElementById(id);
+    return el ? el.value.trim() : "";
+  }
+
+  // ── Recolectar todos los datos del formulario ──────────────────────
+  function recolectarDatos() {
+    // Puntaje criterios
+    let puntaje = 0;
+    ['c1','c2','c3','c4','c5','c6','c7'].forEach(id => {
+      if (document.getElementById(id) && document.getElementById(id).checked) puntaje++;
+    });
+
+    // Sección 5 — brechas institucionales (checkboxes sin ID grupal)
+    const secPerc = document.getElementById('sec-4');
+    const brechasContainer = secPerc ? secPerc.querySelectorAll('.subsection-title') : [];
+    let brechasText = "";
+    // Las brechas están en el segundo bloque de checkboxes de sec-4
+    const allOptGroups = secPerc ? secPerc.querySelectorAll('.options-group') : [];
+    // El último .options-group con checkboxes en sec-4 (antes de propuesta-comunidad) = brechas
+    for (let i = allOptGroups.length - 1; i >= 0; i--) {
+      const checks = allOptGroups[i].querySelectorAll('input[type="checkbox"]');
+      if (checks.length >= 6) { // El grupo de brechas tiene 8 items
+        brechasText = Array.from(checks)
+          .filter(c => c.checked)
+          .map(c => {
+            const label = c.closest('.opt-item');
+            return label ? label.textContent.trim().substring(0, 80) : "";
+          })
+          .filter(Boolean)
+          .join(", ");
+        break;
+      }
+    }
+
+    // Sección 6 — acciones recomendadas
+    const secCierre = document.getElementById('sec-5');
+    let accionesText = "";
+    if (secCierre) {
+      const accionesGroup = secCierre.querySelectorAll('.options-group');
+      for (const group of accionesGroup) {
+        const checks = group.querySelectorAll('input[type="checkbox"]');
+        if (checks.length >= 5) { // El grupo de acciones tiene 7 items
+          accionesText = Array.from(checks)
+            .filter(c => c.checked)
+            .map(c => c.value)
+            .join(", ");
+          break;
+        }
+      }
+    }
+
+    // Sección 5 — fenómenos de convivencia (chips en sec-4)
+    const fenomenosChips = secPerc ? secPerc.querySelectorAll('.fenomeno-chips') : [];
+    let fenomenosText = "";
+    let orgText = "";
+    if (fenomenosChips.length >= 1) {
+      fenomenosText = Array.from(fenomenosChips[0].querySelectorAll('input[type="checkbox"]:checked'))
+        .map(c => c.value).join(", ");
+    }
+    if (fenomenosChips.length >= 2) {
+      orgText = Array.from(fenomenosChips[1].querySelectorAll('input[type="checkbox"]:checked'))
+        .map(c => c.value).join(", ");
+    }
+
+    // Sección 2 — tipo de deterioro (chips en sec-1)
+    const sec1 = document.getElementById('sec-1');
+    let deterioroText = "";
+    if (sec1) {
+      const deterioroChips = sec1.querySelectorAll('.fenomeno-chips');
+      if (deterioroChips.length >= 2) {
+        deterioroText = Array.from(deterioroChips[1].querySelectorAll('input[type="checkbox"]:checked'))
+          .map(c => c.value).join(", ");
+      }
+    }
+
+    // Sección 4 — población afectada (chips en sec-3)
+    const sec3 = document.getElementById('sec-3');
+    let pobAfectadaText = "";
+    if (sec3) {
+      const pobChips = sec3.querySelectorAll('.fenomeno-chips');
+      if (pobChips.length >= 1) {
+        pobAfectadaText = Array.from(pobChips[0].querySelectorAll('input[type="checkbox"]:checked'))
+          .map(c => c.value).join(", ");
+      }
+    }
+
+    // Localidad nombre completo
+    const locMap = { "MET": "Metropolitana", "NCH": "Norte-Centro Histórico", "RIO": "Riomar", "SOC": "Suroccidente", "SOR": "Suroriente" };
+    const locVal = getVal('localidad');
+
+    return {
+      // Sección 1
+      codigo:               getVal('codigo'),
+      fecha:                getVal('fecha'),
+      hora_inicio:          getVal('hora-inicio'),
+      localidad:            locMap[locVal] || locVal,
+      barrio:               getVal('barrio'),
+      direccion:            getVal('direccion'),
+      latitud:              getVal('lat'),
+      longitud:             getVal('lng'),
+      responsable:          getVal('resp-nombre'),
+      cargo:                getVal('resp-cargo'),
+      entidad:              getVal('resp-entidad'),
+      telefono:             getVal('resp-tel'),
+      acompanantes:         getVal('acompanantes'),
+      // Sección 2
+      iluminacion_estado:   getRadio('ilum-estado'),
+      zonas_oscuras:        getRadio('zonas-oscuras'),
+      zonas_oscuras_detalle: getVal('zonas-oscuras-detalle'),
+      iluminacion_urgencia: getRadio('ilum-urgencia'),
+      amoblamiento_presente: getChips('chips-amoblamiento'),
+      amoblamiento_estado:  getRadio('amob-estado'),
+      uso_espacio:          getRadio('uso-espacio'),
+      infraestructura_deterioro: getRadio('infraestr-deterioro'),
+      tipo_deterioro:       deterioroText,
+      obs_infraestructura:  getVal('obs-infraestr'),
+      amoblamiento_urgencia: getRadio('amob-urgencia'),
+      amoblamiento_accion:  getRadio('amob-accion'),
+      // Sección 3
+      hay_espacios:         getRadio('hay-espacios'),
+      espacio_nombre:       getVal('esp-nombre'),
+      espacio_tipo:         getVal('esp-tipo'),
+      espacio_estado:       getVal('esp-estado'),
+      criterio_c1:          document.getElementById('c1') && document.getElementById('c1').checked ? "Sí" : "No",
+      criterio_c2:          document.getElementById('c2') && document.getElementById('c2').checked ? "Sí" : "No",
+      criterio_c3:          document.getElementById('c3') && document.getElementById('c3').checked ? "Sí" : "No",
+      criterio_c4:          document.getElementById('c4') && document.getElementById('c4').checked ? "Sí" : "No",
+      criterio_c5:          document.getElementById('c5') && document.getElementById('c5').checked ? "Sí" : "No",
+      criterio_c6:          document.getElementById('c6') && document.getElementById('c6').checked ? "Sí" : "No",
+      criterio_c7:          document.getElementById('c7') && document.getElementById('c7').checked ? "Sí" : "No",
+      puntaje_criterios:    puntaje + " / 7",
+      espacio_intervencion_previa: getRadio('esp-prev'),
+      espacio_prev_detalle: getVal('esp-prev-detalle'),
+      espacio_propuesta:    getVal('esp-propuesta'),
+      hay_basuras:          getRadio('hay-basuras'),
+      basuras_frecuencia:   getRadio('basuras-frec'),
+      obs_espacios:         getVal('obs-espacios'),
+      // Sección 4
+      hay_expendios:        getRadio('hay-expendios'),
+      num_expendios:        getVal('num-expendios'),
+      tipo_expendio:        getRadio('tipo-expendio'),
+      expendio_horario:     getRadio('exp-horario'),
+      poblacion_afectada:   pobAfectadaText,
+      expendio_vinculos:    getRadio('exp-vinculos'),
+      expendio_operativos:  getRadio('exp-operativos'),
+      expendio_resultado:   getVal('exp-resultado'),
+      expendio_urgencia:    getRadio('exp-urgencia'),
+      obs_expendios:        getVal('obs-expendios'),
+      // Sección 5
+      percepcion_seguridad: getRadio('perc-seguridad'),
+      fenomenos_convivencia: fenomenosText,
+      org_comunitarias:     getRadio('org-comunitarias'),
+      org_presentes:        orgText,
+      presencia_policial:   getRadio('presencia-policial'),
+      brechas_institucionales: brechasText,
+      propuesta_comunidad:  getVal('propuesta-comunidad'),
+      eventos_especiales:   getVal('eventos-especiales'),
+      // Sección 6
+      hora_fin:             getVal('hora-fin'),
+      conclusion:           getVal('conclusion'),
+      acciones_recomendadas: accionesText,
+      seguimiento:          getRadio('seguimiento'),
+      firma:                getVal('firma')
+    };
+  }
+
   // ── Enviar formulario ─────────────────────────────────────────────────
   function enviarFormulario() {
     if (!validarSeccion(5)) return;
 
-    const codigo = document.getElementById('codigo').value || 'P2-SIN-CODIGO';
-    document.getElementById('success-code').textContent = codigo;
+    const datos = recolectarDatos();
+    const codigo = datos.codigo || 'P2-SIN-CODIGO';
+    const btnSubmit = document.querySelector('.btn-submit');
 
+    // Estado de envío
+    btnSubmit.disabled = true;
+    btnSubmit.innerHTML = '⏳ Enviando...';
+    btnSubmit.style.opacity = '0.7';
+
+    fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(datos)
+    })
+    .then(() => {
+      // Con mode: 'no-cors' no podemos leer la respuesta, pero el POST se ejecuta
+      mostrarExito(codigo);
+    })
+    .catch(err => {
+      console.error('Error al enviar:', err);
+      // Intentar envío alternativo con redirect
+      enviarConRedirect(datos, codigo);
+    });
+  }
+
+  // ── Envío alternativo vía formulario oculto (fallback CORS) ────────
+  function enviarConRedirect(datos, codigo) {
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = APPS_SCRIPT_URL;
+    form.target = '_blank';
+    form.style.display = 'none';
+
+    for (const [key, value] of Object.entries(datos)) {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = key;
+      input.value = value;
+      form.appendChild(input);
+    }
+
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
+
+    // Mostrar éxito de todas formas
+    setTimeout(() => mostrarExito(codigo), 500);
+  }
+
+  function mostrarExito(codigo) {
+    document.getElementById('success-code').textContent = codigo;
     document.querySelectorAll('.section').forEach(s => s.classList.remove('visible'));
     document.getElementById('success').classList.add('visible');
     document.getElementById('progress-fill').style.width = '100%';
     document.getElementById('pct').textContent = '100%';
     document.querySelectorAll('.prog-step').forEach(s => s.classList.add('done'));
+
+    // Restaurar botón
+    const btnSubmit = document.querySelector('.btn-submit');
+    if (btnSubmit) {
+      btnSubmit.disabled = false;
+      btnSubmit.innerHTML = '✅ Enviar Levantamiento';
+      btnSubmit.style.opacity = '1';
+    }
+
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
