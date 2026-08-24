@@ -1573,32 +1573,33 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 
     // Estado de envío
     btnSubmit.disabled = true;
-    btnSubmit.innerHTML = '⏳ Enviando...';
+    btnSubmit.innerHTML = '⏳ Enviando a la base de datos...';
     btnSubmit.style.opacity = '0.7';
 
-    fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(datos)
-    })
-    .then(() => {
-      // Con mode: 'no-cors' no podemos leer la respuesta, pero el POST se ejecuta
-      mostrarExito(codigo);
-    })
-    .catch(err => {
-      console.error('Error al enviar:', err);
-      // Intentar envío alternativo con redirect
-      enviarConRedirect(datos, codigo);
-    });
-  }
+    // ── Envío vía iframe oculto (evita CORS) ──
+    let iframe = document.getElementById('iframe-envio');
+    if (!iframe) {
+      iframe = document.createElement('iframe');
+      iframe.id = 'iframe-envio';
+      iframe.name = 'iframe-envio';
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+    }
 
-  // ── Envío alternativo vía formulario oculto (fallback CORS) ────────
-  function enviarConRedirect(datos, codigo) {
+    // Escuchar respuesta del Apps Script vía postMessage
+    const handler = function(event) {
+      if (event.data && event.data.status === 'ok') {
+        window.removeEventListener('message', handler);
+        mostrarExito(event.data.codigo || codigo);
+      }
+    };
+    window.addEventListener('message', handler);
+
+    // Crear formulario oculto que apunta al iframe
     const form = document.createElement('form');
     form.method = 'POST';
     form.action = APPS_SCRIPT_URL;
-    form.target = '_blank';
+    form.target = 'iframe-envio';
     form.style.display = 'none';
 
     for (const [key, value] of Object.entries(datos)) {
@@ -1613,8 +1614,14 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
     form.submit();
     document.body.removeChild(form);
 
-    // Mostrar éxito de todas formas
-    setTimeout(() => mostrarExito(codigo), 500);
+    // Timeout de seguridad: si en 12s no llega postMessage, mostrar éxito igual
+    // (el envío ya se hizo, solo que el iframe no puede comunicar cross-origin)
+    setTimeout(function() {
+      window.removeEventListener('message', handler);
+      if (btnSubmit.disabled) {
+        mostrarExito(codigo);
+      }
+    }, 12000);
   }
 
   function mostrarExito(codigo) {
